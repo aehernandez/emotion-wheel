@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import * as d3 from 'd3';
 
 // Helper to generate unique IDs
@@ -402,7 +402,7 @@ export default function App() {
 
     // Filter out root from rendering if you want a hole in the middle, 
     // or keep it. Emotion wheels usually don't show the root "Emotions" as a slice.
-    const nodesToRender = root.descendants().filter(d => d.depth > 0);
+    const nodesToRender = root.descendants().filter(d => d.depth > 0) as d3.HierarchyRectangularNode<EmotionNode>[];
 
     // Arc generator
     // Calculate inner/outer radius based on depth.
@@ -476,7 +476,7 @@ export default function App() {
       .attr("stroke-width", padding)
       .attr("class", "segment-path")
       .style("transition", "fill 0.2s ease")
-      .on("click", (event, d) => {
+      .on("click", (_, d) => {
         // Prevent selection if the user was dragging to rotate
         const wasDragged = d3.select(svgRef.current).attr("data-dragged");
         if (wasDragged === "true") return; 
