@@ -90,7 +90,7 @@ const defaultData: EmotionNode = {
 
 // Top 10 most popular Google Fonts
 const top10GoogleFonts = [
-  "Roboto", "Open Sans", "Montserrat", "Lato", "Poppins", 
+  "Roboto", "Open Sans", "Montserrat", "Lato", "Poppins",
   "Inter", "Oswald", "Raleway", "Nunito", "Playfair Display"
 ].sort();
 
@@ -104,6 +104,24 @@ interface LocalSavedState {
   exportWidth?: number;
   availableFonts?: string[];
   isDarkMode?: boolean;
+  colorFormat?: 'hex' | 'rgb' | 'hsl';
+}
+
+interface SavedLoadout {
+  id: string;
+  name: string;
+  timestamp: number;
+  state: {
+    data: EmotionNode;
+    rotation: number;
+    padding: number;
+    borderColor: string;
+    fontFamily: string;
+    fontSize: number;
+    exportWidth: number;
+    isDarkMode: boolean;
+    colorFormat: 'hex' | 'rgb' | 'hsl';
+  };
 }
 
 const getInitialState = (): LocalSavedState => {
@@ -121,14 +139,14 @@ export default function App() {
 
   const [data, setData] = useState<EmotionNode>(initialState.data || defaultData);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
-  
+
   // History states for Undo/Redo tracking
   const historyRef = useRef<EmotionNode[]>([initialState.data || defaultData]);
   const historyIndexRef = useRef<number>(0);
   const skipHistoryRef = useRef<boolean>(false);
   const [canUndo, setCanUndo] = useState<boolean>(false);
   const [canRedo, setCanRedo] = useState<boolean>(false);
-  
+
   // Wheel Settings
   const [rotation, setRotation] = useState<number>(initialState.rotation || 0);
   const [padding, setPadding] = useState<number>(initialState.padding ?? 1);
@@ -137,7 +155,31 @@ export default function App() {
   const [fontSize, setFontSize] = useState<number>(initialState.fontSize || 11);
   const [exportWidth, setExportWidth] = useState<number>(initialState.exportWidth || 1200);
   const [isDarkMode, setIsDarkMode] = useState<boolean>(initialState.isDarkMode || false);
-  
+  const [colorFormat, setColorFormat] = useState<'hex' | 'rgb' | 'hsl'>(initialState.colorFormat || 'hex');
+  const [bgText, setBgText] = useState<string>('');
+  const [textColorText, setTextColorText] = useState<string>('');
+
+  // Saved configurations / Loadouts
+  const [loadouts, setLoadouts] = useState<SavedLoadout[]>(() => {
+    try {
+      const saved = localStorage.getItem('emotionWheelLoadouts');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      console.error("Failed to load loadouts from localStorage", e);
+      return [];
+    }
+  });
+  const [isLoadoutsExpanded, setIsLoadoutsExpanded] = useState<boolean>(false);
+  const [newLoadoutName, setNewLoadoutName] = useState<string>('');
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('emotionWheelLoadouts', JSON.stringify(loadouts));
+    } catch (e) {
+      console.error("Failed to save loadouts to localStorage", e);
+    }
+  }, [loadouts]);
+
   // Font Selection State
   const [availableFonts, setAvailableFonts] = useState<string[]>(initialState.availableFonts || top10GoogleFonts);
   const [customFontInput, setCustomFontInput] = useState<string>("");
@@ -146,7 +188,7 @@ export default function App() {
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
-  
+
   // Track rotation in a ref for the drag handler to access the latest value without dependency loops
   const rotationRef = useRef<number>(rotation);
   useEffect(() => { rotationRef.current = rotation; }, [rotation]);
@@ -154,10 +196,10 @@ export default function App() {
   // Save state to local storage whenever settings change
   useEffect(() => {
     const stateToSave: LocalSavedState = {
-      data, rotation, padding, borderColor, fontFamily, fontSize, exportWidth, availableFonts, isDarkMode
+      data, rotation, padding, borderColor, fontFamily, fontSize, exportWidth, availableFonts, isDarkMode, colorFormat
     };
     localStorage.setItem('emotionWheelState', JSON.stringify(stateToSave));
-  }, [data, rotation, padding, borderColor, fontFamily, fontSize, exportWidth, availableFonts, isDarkMode]);
+  }, [data, rotation, padding, borderColor, fontFamily, fontSize, exportWidth, availableFonts, isDarkMode, colorFormat]);
 
   // Helper to find a node by ID in the tree
   const findNode = (node: EmotionNode, id: string): EmotionNode | null => {
@@ -196,10 +238,70 @@ export default function App() {
   const applyToSiblings = (id: string, prop: keyof EmotionNode, value: any) => {
     const newData = JSON.parse(JSON.stringify(data));
     const parent = findParent(newData, id);
-    if (parent && parent.children) {
-      parent.children.forEach(child => {
-        (child as any)[prop] = value;
-      });
+    if (parent) {
+      const grandparent = findParent(newData, parent.id);
+      const greatGrandparent = grandparent ? findParent(newData, grandparent.id) : null;
+
+      if (grandparent && greatGrandparent && greatGrandparent.id === 'root') {
+        // Third tier node: base emotion is grandparent
+        if (grandparent.children) {
+          grandparent.children.forEach(secChild => {
+            if (secChild.children) {
+              secChild.children.forEach(tertChild => {
+                (tertChild as any)[prop] = value;
+              });
+            }
+          });
+        }
+      } else if (parent.children) {
+        // Normal behavior
+        parent.children.forEach(child => {
+          (child as any)[prop] = value;
+        });
+      }
+      setData(newData);
+    }
+  };
+
+  const applyToOffset = (id: string, prop: keyof EmotionNode, value: any) => {
+    const newData = JSON.parse(JSON.stringify(data));
+    const parent = findParent(newData, id);
+    if (parent) {
+      const grandparent = findParent(newData, parent.id);
+      const greatGrandparent = grandparent ? findParent(newData, grandparent.id) : null;
+
+      if (grandparent && greatGrandparent && greatGrandparent.id === 'root') {
+        // Third tier node: base emotion is grandparent
+        // Gather all grandchildren in a flat array
+        const list: EmotionNode[] = [];
+        if (grandparent.children) {
+          grandparent.children.forEach(secChild => {
+            if (secChild.children) {
+              secChild.children.forEach(tertChild => {
+                list.push(tertChild);
+              });
+            }
+          });
+        }
+        const selectedIndex = list.findIndex(node => node.id === id);
+        if (selectedIndex !== -1) {
+          list.forEach((node, index) => {
+            if (Math.abs(index - selectedIndex) % 2 === 0) {
+              (node as any)[prop] = value;
+            }
+          });
+        }
+      } else if (parent.children) {
+        // Normal behavior (Tier 1 or Tier 2)
+        const selectedIndex = parent.children.findIndex(node => node.id === id);
+        if (selectedIndex !== -1) {
+          parent.children.forEach((child, index) => {
+            if (Math.abs(index - selectedIndex) % 2 === 0) {
+              (child as any)[prop] = value;
+            }
+          });
+        }
+      }
       setData(newData);
     }
   };
@@ -207,10 +309,10 @@ export default function App() {
   const addSegment = (parentId: string) => {
     const newData = JSON.parse(JSON.stringify(data));
     const parent = findNode(newData, parentId);
-    
+
     if (parent) {
       if (!parent.children) parent.children = [];
-      
+
       // Determine depth to set a default color based on parent
       let defaultColor = '#cccccc';
       if (parent.color) defaultColor = parent.color;
@@ -230,12 +332,12 @@ export default function App() {
 
     const newData = JSON.parse(JSON.stringify(data));
     const parent = findParent(newData, id);
-    
+
     if (parent && parent.children) {
       parent.children = parent.children.filter(child => child.id !== id);
       // Remove empty children arrays
       if (parent.children.length === 0) {
-          delete parent.children;
+        delete parent.children;
       }
       setData(newData);
       if (selectedNodeId === id) setSelectedNodeId(null);
@@ -247,24 +349,24 @@ export default function App() {
       skipHistoryRef.current = false;
       return;
     }
-    
+
     // 500ms debounce ensures color picker drags aren't all saved individually
     const timer = setTimeout(() => {
       const latestSaved = historyRef.current[historyIndexRef.current];
       if (JSON.stringify(latestSaved) !== JSON.stringify(data)) {
         const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
         newHistory.push(data);
-        
+
         // Keep history memory reasonable (max 50 steps)
         if (newHistory.length > 50) newHistory.shift();
-        
+
         historyRef.current = newHistory;
         historyIndexRef.current = newHistory.length - 1;
         setCanUndo(historyIndexRef.current > 0);
         setCanRedo(historyIndexRef.current < historyRef.current.length - 1);
       }
     }, 500);
-    
+
     return () => clearTimeout(timer);
   }, [data]);
 
@@ -297,17 +399,71 @@ export default function App() {
     setFontFamily('sans-serif');
     setFontSize(11);
     setExportWidth(1200);
-    setIsDarkMode(false);
     setAvailableFonts(top10GoogleFonts);
-    
+
     // Clear local storage
     localStorage.removeItem('emotionWheelState');
-    
+
     // Reset undo/redo history
     historyRef.current = [defaultData];
     historyIndexRef.current = 0;
     setCanUndo(false);
     setCanRedo(false);
+  };
+
+  const handleSaveLoadout = () => {
+    const name = newLoadoutName.trim();
+    if (!name) return;
+
+    const newLoadout: SavedLoadout = {
+      id: generateId(),
+      name,
+      timestamp: Date.now(),
+      state: {
+        data: JSON.parse(JSON.stringify(data)),
+        rotation,
+        padding,
+        borderColor,
+        fontFamily,
+        fontSize,
+        exportWidth,
+        isDarkMode,
+        colorFormat
+      }
+    };
+
+    setLoadouts(prev => [newLoadout, ...prev]);
+    setNewLoadoutName('');
+  };
+
+  const handleLoadLoadout = (loadout: SavedLoadout) => {
+    const s = loadout.state;
+    setData(s.data);
+    setRotation(s.rotation);
+    setPadding(s.padding);
+    setBorderColor(s.borderColor);
+    setFontFamily(s.fontFamily);
+    setFontSize(s.fontSize);
+    setExportWidth(s.exportWidth);
+    setIsDarkMode(s.isDarkMode);
+    setColorFormat(s.colorFormat);
+    setSelectedNodeId(null);
+
+    // Save to Undo/Redo history
+    const newHistory = historyRef.current.slice(0, historyIndexRef.current + 1);
+    newHistory.push(s.data);
+    if (newHistory.length > 50) newHistory.shift();
+    historyRef.current = newHistory;
+    historyIndexRef.current = newHistory.length - 1;
+    setCanUndo(historyIndexRef.current > 0);
+    setCanRedo(historyIndexRef.current < historyRef.current.length - 1);
+  };
+
+  const handleDeleteLoadout = (id: string, name: string) => {
+    const confirmed = window.confirm(`Are you sure you want to delete the configuration "${name}"?`);
+    if (confirmed) {
+      setLoadouts(prev => prev.filter(l => l.id !== id));
+    }
   };
 
   const handleAddCustomFont = () => {
@@ -353,11 +509,11 @@ export default function App() {
   // Dynamically load Google Font when changed
   useEffect(() => {
     if (fontFamily === 'sans-serif' || fontFamily === 'serif' || fontFamily === 'monospace') return;
-    
+
     const fontName = fontFamily.replace(/['"]/g, ''); // Remove quotes if any
     const formattedFontName = fontName.split(',')[0].trim().replace(/ /g, '+');
     const url = `https://fonts.googleapis.com/css2?family=${formattedFontName}:wght@400;600;700&display=swap`;
-    
+
     // Check if link already exists
     if (!document.querySelector(`link[href="${url}"]`)) {
       const link = document.createElement('link');
@@ -393,7 +549,7 @@ export default function App() {
 
     // Determine max depth to calculate radii correctly
     const maxDepth = root.height;
-    
+
     // Create Partition layout
     const partition = d3.partition<EmotionNode>()
       .size([2 * Math.PI, radius]); // size: [angle, radius]
@@ -413,16 +569,16 @@ export default function App() {
       .startAngle(d => d.x0)
       .endAngle(d => d.x1)
       .padRadius(radius / 2)
-      .innerRadius(d => (d.depth - 1) * radiusStep) 
+      .innerRadius(d => (d.depth - 1) * radiusStep)
       .outerRadius(d => d.depth * radiusStep);
 
     const dragBehavior = d3.drag<SVGSVGElement, unknown>()
-      .on("start", function(event) {
+      .on("start", function (event) {
         const [x, y] = d3.pointer(event, svgRef.current);
         const cx = width / 2;
         const cy = height / 2;
         const angle = Math.atan2(y - cy, x - cx) * 180 / Math.PI;
-        
+
         d3.select(this)
           .attr("data-start-angle", angle)
           .attr("data-start-rotation", rotationRef.current)
@@ -430,35 +586,35 @@ export default function App() {
           .attr("data-dragging-active", "true")
           .style("cursor", "grabbing");
       })
-      .on("drag", function(event) {
+      .on("drag", function (event) {
         const [x, y] = d3.pointer(event, svgRef.current);
         const cx = width / 2;
         const cy = height / 2;
         const angle = Math.atan2(y - cy, x - cx) * 180 / Math.PI;
-        
+
         const startAngle = parseFloat(d3.select(this).attr("data-start-angle") || "0");
         const startRotation = parseFloat(d3.select(this).attr("data-start-rotation") || "0");
-        
+
         let delta = angle - startAngle;
-        
+
         // Handle wrapping around the atan2 seam (-180 to 180)
         if (delta > 180) delta -= 360;
         if (delta < -180) delta += 360;
-        
+
         const newRotation = (startRotation + delta + 360) % 360;
-        
+
         // Only register as a drag if moved more than a tiny threshold to preserve click events
         if (Math.abs(delta) > 1) {
-            d3.select(this).attr("data-dragged", "true");
+          d3.select(this).attr("data-dragged", "true");
         }
-        
+
         setRotation(newRotation);
       })
-      .on("end", function() {
+      .on("end", function () {
         d3.select(this).attr("data-dragging-active", "false").style("cursor", "grab");
         // Briefly delay clearing the dragged state so the onClick handler can catch it
         setTimeout(() => {
-            d3.select(svgRef.current).attr("data-dragged", "false");
+          d3.select(svgRef.current).attr("data-dragged", "false");
         }, 50);
       });
 
@@ -479,8 +635,8 @@ export default function App() {
       .on("click", (_, d) => {
         // Prevent selection if the user was dragging to rotate
         const wasDragged = d3.select(svgRef.current).attr("data-dragged");
-        if (wasDragged === "true") return; 
-        
+        if (wasDragged === "true") return;
+
         setSelectedNodeId(d.data.id);
       });
 
@@ -488,19 +644,19 @@ export default function App() {
     g.selectAll("text")
       .data(nodesToRender)
       .join("text")
-      .attr("transform", function(d) {
+      .attr("transform", function (d) {
         // Calculate center of arc
         const x = ((d.x0 + d.x1) / 2) * 180 / Math.PI;
         // Position text precisely in the middle of the radius step for this depth
         const y = (d.depth - 0.5) * radiusStep;
-        
+
         // Determine the actual angle on screen taking global rotation into account
         let globalAngle = (x + rotation) % 360;
         if (globalAngle < 0) globalAngle += 360;
-        
+
         // If text falls on the left side of the wheel, flip it 180 degrees so it's always readable
         const isLeftHemisphere = globalAngle > 180 && globalAngle < 360;
-        
+
         const rot = x - 90;
         return `rotate(${rot}) translate(${y},0) rotate(${isLeftHemisphere ? 180 : 0})`;
       })
@@ -522,21 +678,21 @@ export default function App() {
   const exportSVG = () => {
     const svgElement = svgRef.current;
     if (!svgElement) return;
-    
+
     const serializer = new XMLSerializer();
     let source = serializer.serializeToString(svgElement);
-    
+
     // Add namespaces if missing
-    if(!source.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)){
-        source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
+    if (!source.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)) {
+      source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
     }
-    if(!source.match(/^<svg[^>]+"http\:\/\/www\.w3\.org\/1999\/xlink"/)){
-        source = source.replace(/^<svg/, '<svg xmlns:xlink="http://www.w3.org/1999/xlink"');
+    if (!source.match(/^<svg[^>]+"http\:\/\/www\.w3\.org\/1999\/xlink"/)) {
+      source = source.replace(/^<svg/, '<svg xmlns:xlink="http://www.w3.org/1999/xlink"');
     }
 
     const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
     const url = URL.createObjectURL(blob);
-    
+
     const link = document.createElement("a");
     link.href = url;
     link.download = "emotion-wheel.svg";
@@ -553,14 +709,14 @@ export default function App() {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    
+
     // Use the user-defined export width
     canvas.width = exportWidth;
     canvas.height = exportWidth; // Keep square
 
     const serializer = new XMLSerializer();
     const svgString = serializer.serializeToString(svgElement);
-    
+
     // Create an Image object
     const img = new Image();
     const svgBlob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
@@ -569,10 +725,10 @@ export default function App() {
     img.onload = () => {
       // Draw transparent background (it's transparent by default on canvas)
       // ctx.clearRect(0, 0, canvas.width, canvas.height); // Optional explicit clear
-      
+
       // Draw image onto canvas, scaled to requested width
       ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      
+
       const pngUrl = canvas.toDataURL("image/png");
       const link = document.createElement("a");
       link.href = pngUrl;
@@ -592,37 +748,79 @@ export default function App() {
   const isCurrentlyBold = selectedNode ? (selectedNode.isBold !== undefined ? selectedNode.isBold : isTier1) : false;
   const isCurrentlyItalic = selectedNode ? (selectedNode.isItalic !== undefined ? selectedNode.isItalic : false) : false;
 
+  // Color format helpers and states sync
+  const formatColor = (colorStr: string, format: 'hex' | 'rgb' | 'hsl'): string => {
+    const c = d3.color(colorStr);
+    if (!c) return colorStr;
+    if (format === 'rgb') return c.formatRgb();
+    if (format === 'hsl') return c.formatHsl();
+    return c.formatHex();
+  };
+
+  const isValidColor = (val: string): boolean => {
+    return d3.color(val) !== null;
+  };
+
+  useEffect(() => {
+    if (selectedNode) {
+      setBgText(formatColor(selectedNode.color || '#ffffff', colorFormat));
+      setTextColorText(formatColor(selectedNode.textColor || '#000000', colorFormat));
+    }
+  }, [selectedNodeId, colorFormat, selectedNode?.color, selectedNode?.textColor]);
+
+  const handleBgTextChange = (val: string) => {
+    setBgText(val);
+    const c = d3.color(val);
+    if (c && selectedNode) {
+      const newHex = c.formatHex();
+      if (selectedNode.color !== newHex) {
+        updateNode(selectedNode.id, { color: newHex });
+      }
+    }
+  };
+
+  const handleTextColorTextChange = (val: string) => {
+    setTextColorText(val);
+    const c = d3.color(val);
+    if (c && selectedNode) {
+      const newHex = c.formatHex();
+      if (selectedNode.textColor !== newHex) {
+        updateNode(selectedNode.id, { textColor: newHex });
+      }
+    }
+  };
+
   return (
     <div className={`flex flex-col md:flex-row h-screen font-sans ${isDarkMode ? 'bg-neutral-900 text-neutral-100' : 'bg-neutral-100 text-neutral-800'}`}>
-      
+
       {/* LEFT: Editor Panel */}
       <div className={`w-full md:w-80 lg:w-96 border-r overflow-y-auto flex flex-col shadow-sm z-10 ${isDarkMode ? 'bg-neutral-850 border-neutral-700 text-neutral-200' : 'bg-white border-neutral-200 text-neutral-800'}`}>
-        <div className={`p-6 border-b sticky top-0 z-20 flex justify-between items-start ${isDarkMode ? 'bg-neutral-850 border-neutral-700' : 'bg-neutral-50 border-neutral-100'}`}>
+        <div className={`p-6 border-b flex justify-between items-start ${isDarkMode ? 'bg-neutral-850 border-neutral-700' : 'bg-neutral-50 border-neutral-100'}`}>
           <div>
             <h1 className={`text-2xl font-bold tracking-tight ${isDarkMode ? 'text-white' : 'text-neutral-900'}`}>Emotion Wheel</h1>
             <p className={`text-sm mt-1 ${isDarkMode ? 'text-neutral-400' : 'text-neutral-500'}`}>Customize and export your wheel.</p>
           </div>
           <div className="flex flex-col items-end space-y-2">
             <div className="flex space-x-1">
-              <button 
-                onClick={handleUndo} 
-                disabled={!canUndo} 
+              <button
+                onClick={handleUndo}
+                disabled={!canUndo}
                 className={`p-1.5 border rounded disabled:opacity-40 transition-colors ${isDarkMode ? 'bg-neutral-700 border-neutral-600 text-neutral-300 hover:bg-neutral-600' : 'bg-white border-neutral-300 text-neutral-600 hover:bg-neutral-50'}`}
                 title="Undo"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6"></path></svg>
               </button>
-              <button 
-                onClick={handleRedo} 
-                disabled={!canRedo} 
+              <button
+                onClick={handleRedo}
+                disabled={!canRedo}
                 className={`p-1.5 border rounded disabled:opacity-40 transition-colors ${isDarkMode ? 'bg-neutral-700 border-neutral-600 text-neutral-300 hover:bg-neutral-600' : 'bg-white border-neutral-300 text-neutral-600 hover:bg-neutral-50'}`}
                 title="Redo"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 10h-10a8 8 0 00-8 8v2M21 10l-6 6m6-6l-6-6"></path></svg>
               </button>
             </div>
-            <button 
-              onClick={handleReset} 
+            <button
+              onClick={handleReset}
               className={`text-xs px-2 py-1 rounded transition-colors ${isDarkMode ? 'bg-red-900/30 text-red-400 hover:bg-red-900/50' : 'bg-red-50 text-red-600 border border-red-100 hover:bg-red-100'}`}
             >
               Reset Default
@@ -633,28 +831,28 @@ export default function App() {
         {/* Global Settings */}
         <div className="p-6 border-b border-neutral-200">
           <h2 className="text-sm font-semibold text-neutral-400 uppercase tracking-wider mb-4">Global Settings</h2>
-          
+
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium mb-1">Rotation ({Math.round(rotation)}°)</label>
               <div className="flex items-center space-x-2">
-                <input 
-                  type="range" min="0" max="360" value={Math.round(rotation)} 
+                <input
+                  type="range" min="0" max="360" value={Math.round(rotation)}
                   onChange={(e) => setRotation(Number(e.target.value))}
                   className="w-full accent-blue-600"
                 />
-                <input 
+                <input
                   type="number" min="0" max="360" value={Math.round(rotation)}
                   onChange={(e) => setRotation(Number(e.target.value))}
                   className={`w-16 p-1 border rounded text-sm text-center ${isDarkMode ? 'bg-neutral-700 border-neutral-600 text-white' : 'border-neutral-300'}`}
                 />
               </div>
             </div>
-            
+
             <div>
               <label className="block text-sm font-medium mb-1">Segment Padding ({padding}px)</label>
-              <input 
-                type="range" min="0" max="10" step="0.5" value={padding} 
+              <input
+                type="range" min="0" max="10" step="0.5" value={padding}
                 onChange={(e) => setPadding(Number(e.target.value))}
                 className="w-full accent-blue-600"
               />
@@ -662,8 +860,8 @@ export default function App() {
 
             <div className="flex items-center space-x-3">
               <label className="text-sm font-medium w-42">Segment Border Color</label>
-              <input 
-                type="color" value={borderColor} 
+              <input
+                type="color" value={borderColor}
                 onChange={(e) => setBorderColor(e.target.value)}
                 className="h-8 w-14 cursor-pointer rounded border border-neutral-300"
               />
@@ -672,12 +870,12 @@ export default function App() {
             <div>
               <label className="block text-sm font-medium mb-1">Font Size ({fontSize}px)</label>
               <div className="flex items-center space-x-2">
-                <input 
-                  type="range" min="6" max="36" value={fontSize} 
+                <input
+                  type="range" min="6" max="36" value={fontSize}
                   onChange={(e) => setFontSize(Number(e.target.value))}
                   className="w-full accent-blue-600"
                 />
-                <input 
+                <input
                   type="number" min="6" max="36" value={fontSize}
                   onChange={(e) => setFontSize(Number(e.target.value))}
                   className={`w-16 p-1 border rounded text-sm text-center ${isDarkMode ? 'bg-neutral-700 border-neutral-600 text-white' : 'border-neutral-300'}`}
@@ -686,48 +884,48 @@ export default function App() {
             </div>
 
             <div>
-               <label className="block text-sm font-medium mb-1">Font Family</label>
-               <select
-                 value={fontFamily === 'sans-serif' || fontFamily === 'serif' ? fontFamily : fontFamily.replace(/['"]/g, '').split(',')[0].trim()}
-                 onChange={(e) => {
-                     if (e.target.value === 'sans-serif' || e.target.value === 'serif') {
-                         setFontFamily(e.target.value);
-                     } else {
-                         setFontFamily(`'${e.target.value}', sans-serif`);
-                     }
-                 }}
-                 className={`w-full p-2 border rounded bg-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none mb-3 ${isDarkMode ? 'bg-neutral-700 border-neutral-600 text-white' : 'bg-white border-neutral-300'}`}
-               >
-                 <option value="sans-serif">System Sans-Serif</option>
-                 <option value="serif">System Serif</option>
-                 <optgroup label="Available Fonts">
-                   {availableFonts.map(font => (
-                     <option key={font} value={font}>{font}</option>
-                   ))}
-                 </optgroup>
-               </select>
+              <label className="block text-sm font-medium mb-1">Font Family</label>
+              <select
+                value={fontFamily === 'sans-serif' || fontFamily === 'serif' ? fontFamily : fontFamily.replace(/['"]/g, '').split(',')[0].trim()}
+                onChange={(e) => {
+                  if (e.target.value === 'sans-serif' || e.target.value === 'serif') {
+                    setFontFamily(e.target.value);
+                  } else {
+                    setFontFamily(`'${e.target.value}', sans-serif`);
+                  }
+                }}
+                className={`w-full p-2 border rounded bg-white text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none mb-3 ${isDarkMode ? 'bg-neutral-700 border-neutral-600 text-white' : 'bg-white border-neutral-300'}`}
+              >
+                <option value="sans-serif">System Sans-Serif</option>
+                <option value="serif">System Serif</option>
+                <optgroup label="Available Fonts">
+                  {availableFonts.map(font => (
+                    <option key={font} value={font}>{font}</option>
+                  ))}
+                </optgroup>
+              </select>
 
-               <div className={`p-3 rounded border ${isDarkMode ? 'bg-neutral-900 border-neutral-700' : 'bg-neutral-100 border-neutral-200'}`}>
-                 <label className={`block text-xs font-medium mb-2 ${isDarkMode ? 'text-neutral-400' : 'text-neutral-600'}`}>Add Custom Google Font</label>
-                 <div className="flex space-x-2">
-                     <input
-                         type="text"
-                         placeholder="e.g., Space Mono"
-                         value={customFontInput}
-                         onChange={(e) => setCustomFontInput(e.target.value)}
-                         onKeyDown={(e) => e.key === 'Enter' && handleAddCustomFont()}
-                         className={`flex-grow p-1.5 border rounded text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none ${isDarkMode ? 'bg-neutral-700 border-neutral-600 text-white' : 'border-neutral-300'}`}
-                     />
-                     <button
-                         onClick={handleAddCustomFont}
-                         disabled={isFontLoading || !customFontInput.trim()}
-                         className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:opacity-50 transition-colors"
-                     >
-                         {isFontLoading ? '...' : 'Add'}
-                     </button>
-                 </div>
-                 {customFontError && <p className="text-xs text-red-500 mt-2 leading-tight">{customFontError}</p>}
-               </div>
+              <div className={`p-3 rounded border ${isDarkMode ? 'bg-neutral-900 border-neutral-700' : 'bg-neutral-100 border-neutral-200'}`}>
+                <label className={`block text-xs font-medium mb-2 ${isDarkMode ? 'text-neutral-400' : 'text-neutral-600'}`}>Add Custom Google Font</label>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    placeholder="e.g., Space Mono"
+                    value={customFontInput}
+                    onChange={(e) => setCustomFontInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddCustomFont()}
+                    className={`flex-grow p-1.5 border rounded text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none ${isDarkMode ? 'bg-neutral-700 border-neutral-600 text-white' : 'border-neutral-300'}`}
+                  />
+                  <button
+                    onClick={handleAddCustomFont}
+                    disabled={isFontLoading || !customFontInput.trim()}
+                    className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:opacity-50 transition-colors"
+                  >
+                    {isFontLoading ? '...' : 'Add'}
+                  </button>
+                </div>
+                {customFontError && <p className="text-xs text-red-500 mt-2 leading-tight">{customFontError}</p>}
+              </div>
             </div>
           </div>
         </div>
@@ -735,7 +933,7 @@ export default function App() {
         {/* Segment Editor */}
         <div className="p-6 flex-grow border-b border-neutral-200">
           <h2 className={`text-sm font-semibold uppercase tracking-wider mb-4 ${isDarkMode ? 'text-neutral-500' : 'text-neutral-400'}`}>Segment Editor</h2>
-          
+
           {!selectedNode ? (
             <div className={`text-sm p-4 rounded-lg border border-dashed text-center ${isDarkMode ? 'text-neutral-500 bg-neutral-900 border-neutral-700' : 'text-neutral-500 bg-neutral-50 border-neutral-300'}`}>
               Click on any segment in the wheel to edit its properties, add sub-emotions, or remove it.
@@ -743,27 +941,27 @@ export default function App() {
           ) : (
             <div className="space-y-5 animate-in fade-in slide-in-from-left-2 duration-200">
               <div className={`flex justify-between items-center p-3 rounded-md border ${isDarkMode ? 'bg-blue-900/20 border-blue-800' : 'bg-blue-50 border-blue-100'}`}>
-                 <span className={`font-semibold truncate mr-2 ${isDarkMode ? 'text-blue-200' : 'text-blue-900'}`}>Editing: {selectedNode.name}</span>
-                 <button 
-                    onClick={() => setSelectedNodeId(null)}
-                    className={`text-xs px-2 py-1 rounded border ${isDarkMode ? 'text-blue-300 bg-blue-900/40 border-blue-800' : 'text-blue-500 hover:text-blue-700 bg-white border-blue-200'}`}
-                  >
-                    Deselect
-                  </button>
+                <span className={`font-semibold truncate mr-2 ${isDarkMode ? 'text-blue-200' : 'text-blue-900'}`}>Editing: {selectedNode.name}</span>
+                <button
+                  onClick={() => setSelectedNodeId(null)}
+                  className={`text-xs px-2 py-1 rounded border ${isDarkMode ? 'text-blue-300 bg-blue-900/40 border-blue-800' : 'text-blue-500 hover:text-blue-700 bg-white border-blue-200'}`}
+                >
+                  Deselect
+                </button>
               </div>
 
               <div>
                 <div className="flex justify-between items-end mb-1">
                   <label className="block text-sm font-medium">Text / Label</label>
                   <div className="flex space-x-1">
-                    <button 
+                    <button
                       onClick={() => updateNode(selectedNode.id, { isBold: !isCurrentlyBold })}
                       className={`w-6 h-6 flex items-center justify-center rounded text-xs font-bold border transition-colors ${isCurrentlyBold ? (isDarkMode ? 'bg-blue-800 border-blue-600 text-blue-100' : 'bg-blue-100 border-blue-300 text-blue-800') : (isDarkMode ? 'bg-neutral-700 border-neutral-600 text-neutral-300' : 'bg-white border-neutral-300 text-neutral-600 hover:bg-neutral-50')}`}
                       title="Toggle Bold"
                     >
                       B
                     </button>
-                    <button 
+                    <button
                       onClick={() => updateNode(selectedNode.id, { isItalic: !isCurrentlyItalic })}
                       className={`w-6 h-6 flex items-center justify-center rounded text-xs italic font-serif border transition-colors ${isCurrentlyItalic ? (isDarkMode ? 'bg-blue-800 border-blue-600 text-blue-100' : 'bg-blue-100 border-blue-300 text-blue-800') : (isDarkMode ? 'bg-neutral-700 border-neutral-600 text-neutral-300' : 'bg-white border-neutral-300 text-neutral-600 hover:bg-neutral-50')}`}
                       title="Toggle Italic"
@@ -772,67 +970,128 @@ export default function App() {
                     </button>
                   </div>
                 </div>
-                <input 
-                  type="text" 
-                  value={selectedNode.name} 
+                <input
+                  type="text"
+                  value={selectedNode.name}
                   onChange={(e) => updateNode(selectedNode.id, { name: e.target.value })}
                   className={`w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 focus:outline-none uppercase ${isDarkMode ? 'bg-neutral-700 border-neutral-600 text-white' : 'border-neutral-300'}`}
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              {/* Color Format Selector */}
+              <div className={`flex items-center justify-between mb-3 border-t pt-4 ${isDarkMode ? 'border-neutral-700' : 'border-neutral-200'}`}>
+                <span className={`text-xs font-semibold uppercase tracking-wider ${isDarkMode ? 'text-neutral-400' : 'text-neutral-500'}`}>Color Format</span>
+                <div className={`flex rounded p-0.5 border ${isDarkMode ? 'bg-neutral-900 border-neutral-700' : 'bg-neutral-100 border-neutral-200'}`}>
+                  {(['hex', 'rgb', 'hsl'] as const).map((fmt) => (
+                    <button
+                      key={fmt}
+                      onClick={() => setColorFormat(fmt)}
+                      className={`px-2.5 py-1 text-xs font-semibold rounded uppercase transition-all ${colorFormat === fmt
+                        ? (isDarkMode ? 'bg-neutral-700 text-blue-400 shadow-sm' : 'bg-white text-blue-600 shadow-sm')
+                        : (isDarkMode ? 'text-neutral-400 hover:text-neutral-200' : 'text-neutral-500 hover:text-neutral-700')
+                        }`}
+                    >
+                      {fmt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Color Inputs */}
+              <div className="space-y-4">
+                {/* Background Color */}
                 <div>
-                  <label className="block text-sm font-medium mb-1">Background</label>
+                  <label className="block text-sm font-medium mb-1">Background Color</label>
                   <div className="flex items-center space-x-2">
-                    <input 
-                      type="color" 
-                      value={selectedNode.color} 
+                    <input
+                      type="color"
+                      value={selectedNode.color || '#ffffff'}
                       onChange={(e) => updateNode(selectedNode.id, { color: e.target.value })}
-                      className="h-10 w-full cursor-pointer rounded border border-neutral-300"
+                      className="h-10 w-12 cursor-pointer rounded border border-neutral-300 flex-shrink-0"
+                    />
+                    <input
+                      type="text"
+                      value={bgText}
+                      onChange={(e) => handleBgTextChange(e.target.value)}
+                      className={`flex-grow p-2 border rounded text-sm focus:ring-2 focus:outline-none ${bgText && !isValidColor(bgText)
+                        ? (isDarkMode ? 'border-red-500 focus:ring-red-500 text-red-400 bg-red-900/10' : 'border-red-500 focus:ring-red-500 text-red-600 bg-red-50')
+                        : (isDarkMode ? 'bg-neutral-700 border-neutral-600 text-white focus:ring-blue-500' : 'border-neutral-300 focus:ring-blue-500')
+                        }`}
+                      placeholder={colorFormat === 'hex' ? '#HEX' : colorFormat === 'rgb' ? 'rgb(...)' : 'hsl(...)'}
                     />
                   </div>
-                  <button 
-                    onClick={() => applyToSiblings(selectedNode.id, 'color', selectedNode.color)}
-                    className="mt-1 text-[10px] uppercase font-semibold text-neutral-500 hover:text-blue-600 transition-colors"
-                  >
-                    Apply to Siblings
-                  </button>
+                  <div className="flex items-center space-x-2 mt-1">
+                    <button
+                      onClick={() => applyToSiblings(selectedNode.id, 'color', selectedNode.color)}
+                      className="text-[10px] uppercase font-semibold text-neutral-500 hover:text-blue-600 transition-colors"
+                    >
+                      Apply to Siblings
+                    </button>
+                    <span className="text-[10px] text-neutral-300">|</span>
+                    <button
+                      onClick={() => applyToOffset(selectedNode.id, 'color', selectedNode.color)}
+                      className="text-[10px] uppercase font-semibold text-neutral-500 hover:text-blue-600 transition-colors"
+                    >
+                      Apply to Offset
+                    </button>
+                  </div>
                 </div>
+
+                {/* Text Color */}
                 <div>
                   <label className="block text-sm font-medium mb-1">Text Color</label>
                   <div className="flex items-center space-x-2">
-                    <input 
-                      type="color" 
-                      value={selectedNode.textColor} 
+                    <input
+                      type="color"
+                      value={selectedNode.textColor || '#000000'}
                       onChange={(e) => updateNode(selectedNode.id, { textColor: e.target.value })}
-                      className="h-10 w-full cursor-pointer rounded border border-neutral-300"
+                      className="h-10 w-12 cursor-pointer rounded border border-neutral-300 flex-shrink-0"
+                    />
+                    <input
+                      type="text"
+                      value={textColorText}
+                      onChange={(e) => handleTextColorTextChange(e.target.value)}
+                      className={`flex-grow p-2 border rounded text-sm focus:ring-2 focus:outline-none ${textColorText && !isValidColor(textColorText)
+                        ? (isDarkMode ? 'border-red-500 focus:ring-red-500 text-red-400 bg-red-900/10' : 'border-red-500 focus:ring-red-500 text-red-600 bg-red-50')
+                        : (isDarkMode ? 'bg-neutral-700 border-neutral-600 text-white focus:ring-blue-500' : 'border-neutral-300 focus:ring-blue-500')
+                        }`}
+                      placeholder={colorFormat === 'hex' ? '#HEX' : colorFormat === 'rgb' ? 'rgb(...)' : 'hsl(...)'}
                     />
                   </div>
-                  <button 
-                    onClick={() => applyToSiblings(selectedNode.id, 'textColor', selectedNode.textColor)}
-                    className="mt-1 text-[10px] uppercase font-semibold text-neutral-500 hover:text-blue-600 transition-colors"
-                  >
-                    Apply to Siblings
-                  </button>
+                  <div className="flex items-center space-x-2 mt-1">
+                    <button
+                      onClick={() => applyToSiblings(selectedNode.id, 'textColor', selectedNode.textColor)}
+                      className="text-[10px] uppercase font-semibold text-neutral-500 hover:text-blue-600 transition-colors"
+                    >
+                      Apply to Siblings
+                    </button>
+                    <span className="text-[10px] text-neutral-300">|</span>
+                    <button
+                      onClick={() => applyToOffset(selectedNode.id, 'textColor', selectedNode.textColor)}
+                      className="text-[10px] uppercase font-semibold text-neutral-500 hover:text-blue-600 transition-colors"
+                    >
+                      Apply to Offset
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <hr className={`border ${isDarkMode ? 'border-neutral-700' : 'border-neutral-200'}`} />
 
               <div className="space-y-2">
-                <button 
+                <button
                   onClick={() => addSegment(selectedNode.id)}
                   className={`w-full py-2 rounded text-sm font-medium transition-colors flex justify-center items-center ${isDarkMode ? 'bg-neutral-700 hover:bg-neutral-600 text-neutral-200' : 'bg-neutral-100 hover:bg-neutral-200 text-neutral-800'}`}
                 >
                   <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
                   Add Child Segment
                 </button>
-                
-                <button 
+
+                <button
                   onClick={() => removeSegment(selectedNode.id)}
                   className={`w-full py-2 rounded text-sm font-medium transition-colors border flex justify-center items-center ${isDarkMode ? 'bg-red-900/20 hover:bg-red-900/40 text-red-400 border-red-900' : 'bg-red-50 hover:bg-red-100 text-red-600 border-red-100'}`}
                 >
-                   <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
+                  <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
                   Delete Segment
                 </button>
               </div>
@@ -842,65 +1101,142 @@ export default function App() {
         <div className="p-6 border-b border-neutral-200">
           <div className="space-y-4">
             <div className="flex items-center justify-between">
-               <label className="text-sm font-medium">Dark Mode</label>
-               <button 
+              <label className="text-sm font-medium">Dark Mode</label>
+              <button
                 onClick={() => setIsDarkMode(!isDarkMode)}
                 className={`w-10 h-5 rounded-full relative transition-colors ${isDarkMode ? 'bg-blue-600' : 'bg-neutral-300'}`}
-               >
-                 <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-transform ${isDarkMode ? 'translate-x-6' : 'translate-x-1'}`}></div>
-               </button>
+              >
+                <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-transform ${isDarkMode ? 'translate-x-6' : 'translate-x-1'}`}></div>
+              </button>
             </div>
           </div>
         </div>
 
+        {/* Saved Configurations */}
+        <div className={`p-6 border-b ${isDarkMode ? 'border-neutral-700' : 'border-neutral-200'}`}>
+          <button
+            onClick={() => setIsLoadoutsExpanded(!isLoadoutsExpanded)}
+            className="w-full flex items-center justify-between focus:outline-none"
+          >
+            <h2 className={`text-sm font-semibold uppercase tracking-wider ${isDarkMode ? 'text-neutral-400' : 'text-neutral-500'}`}>
+              Saved Configurations
+            </h2>
+            <svg
+              className={`w-4 h-4 transform transition-transform ${isLoadoutsExpanded ? 'rotate-180' : ''} ${isDarkMode ? 'text-neutral-400' : 'text-neutral-500'}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+            </svg>
+          </button>
+
+          {isLoadoutsExpanded && (
+            <div className="mt-4 space-y-4 animate-in fade-in duration-200">
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-400">Save Current Configuration</label>
+                <div className="flex space-x-2">
+                  <input
+                    type="text"
+                    placeholder="Loadout name..."
+                    value={newLoadoutName}
+                    onChange={(e) => setNewLoadoutName(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSaveLoadout()}
+                    className={`flex-grow p-2 border rounded text-sm focus:ring-2 focus:ring-blue-500 focus:outline-none ${isDarkMode ? 'bg-neutral-800 border-neutral-700 text-white' : 'border-neutral-300 bg-white'}`}
+                  />
+                  <button
+                    onClick={handleSaveLoadout}
+                    disabled={!newLoadoutName.trim()}
+                    className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium disabled:opacity-50 transition-colors flex-shrink-0"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-400">Load/Manage Saved Configurations</label>
+                {loadouts.length === 0 ? (
+                  <p className="text-xs italic text-neutral-500 text-center py-2">No saved configurations yet.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {loadouts.map((loadout) => (
+                      <div
+                        key={loadout.id}
+                        className={`p-2.5 rounded-md border flex items-center justify-between ${isDarkMode ? 'bg-neutral-800 border-neutral-700 text-neutral-200' : 'bg-neutral-50 border-neutral-200 text-neutral-800'
+                          }`}
+                      >
+                        <span className="font-semibold text-xs truncate mr-2 flex-grow text-left">{loadout.name}</span>
+                        <div className="flex space-x-1.5 flex-shrink-0">
+                          <button
+                            onClick={() => handleLoadLoadout(loadout)}
+                            className="px-2.5 py-1 text-[10px] uppercase font-semibold bg-blue-600 hover:bg-blue-700 text-white rounded shadow-sm transition-colors"
+                          >
+                            Load
+                          </button>
+                          <button
+                            onClick={() => handleDeleteLoadout(loadout.id, loadout.name)}
+                            className="px-2.5 py-1 text-[10px] uppercase font-semibold border border-red-500 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded transition-colors"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+
+
         {/* Export Panel */}
         <div className={`p-6 border-t mt-auto ${isDarkMode ? 'bg-neutral-900 border-neutral-700' : 'bg-neutral-50 border-neutral-200'}`}>
-           <h2 className={`text-sm font-semibold uppercase tracking-wider mb-4 ${isDarkMode ? 'text-neutral-500' : 'text-neutral-400'}`}>Export</h2>
-           
-           <div className="mb-4">
-              <label className={`block text-xs font-medium mb-1 ${isDarkMode ? 'text-neutral-400' : 'text-neutral-600'}`}>PNG Resolution (px)</label>
-              <input 
-                type="number" 
-                value={exportWidth} 
-                onChange={(e) => setExportWidth(Number(e.target.value))}
-                className={`w-full p-2 border rounded text-sm ${isDarkMode ? 'bg-neutral-800 border-neutral-600' : 'border-neutral-300'}`}
-                step="100" min="400" max="4000"
-              />
-           </div>
+          <h2 className={`text-sm font-semibold uppercase tracking-wider mb-4 ${isDarkMode ? 'text-neutral-500' : 'text-neutral-400'}`}>Export</h2>
 
-           <div className="grid grid-cols-2 gap-2">
-              <button 
-                onClick={exportPNG}
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium shadow-sm transition-colors flex justify-center items-center"
-              >
-                Export PNG
-              </button>
-              <button 
-                onClick={exportSVG}
-                className={`px-4 py-2 border rounded text-sm font-medium shadow-sm transition-colors flex justify-center items-center ${isDarkMode ? 'bg-neutral-800 hover:bg-neutral-700 border-neutral-600 text-neutral-300' : 'bg-white hover:bg-neutral-50 border-neutral-300 text-neutral-700'}`}
-              >
-                Export SVG
-              </button>
-           </div>
+          <div className="mb-4">
+            <label className={`block text-xs font-medium mb-1 ${isDarkMode ? 'text-neutral-400' : 'text-neutral-600'}`}>PNG Resolution (px)</label>
+            <input
+              type="number"
+              value={exportWidth}
+              onChange={(e) => setExportWidth(Number(e.target.value))}
+              className={`w-full p-2 border rounded text-sm ${isDarkMode ? 'bg-neutral-800 border-neutral-600' : 'border-neutral-300'}`}
+              step="100" min="400" max="4000"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              onClick={exportPNG}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-sm font-medium shadow-sm transition-colors flex justify-center items-center"
+            >
+              Export PNG
+            </button>
+            <button
+              onClick={exportSVG}
+              className={`px-4 py-2 border rounded text-sm font-medium shadow-sm transition-colors flex justify-center items-center ${isDarkMode ? 'bg-neutral-800 hover:bg-neutral-700 border-neutral-600 text-neutral-300' : 'bg-white hover:bg-neutral-50 border-neutral-300 text-neutral-700'}`}
+            >
+              Export SVG
+            </button>
+          </div>
         </div>
       </div>
 
       {/* RIGHT: Visualizer */}
       <div className="flex-grow flex flex-col relative" ref={containerRef}>
-        
+
         {/* Top bar over visualizer for title */}
         <div className="absolute top-0 left-0 w-full p-4 flex justify-center pointer-events-none z-10">
-             <h2 className={`text-4xl font-serif tracking-wide ${isDarkMode ? 'text-neutral-100' : 'text-neutral-800'}`} style={{ fontFamily: fontFamily }}>Wheel of Emotions</h2>
+          <h2 className={`text-4xl font-serif tracking-wide ${isDarkMode ? 'text-neutral-100' : 'text-neutral-800'}`} style={{ fontFamily: fontFamily }}>Wheel of Emotions</h2>
         </div>
 
         <div className="flex-grow flex items-center justify-center p-8 mt-12">
-            <div className={`w-full max-w-4xl aspect-square relative shadow-2xl rounded-full overflow-hidden ${isDarkMode ? 'bg-neutral-800' : 'bg-white'}`} 
-                 style={{
-                   boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.15)",
-                 }}>
-              {/* SVG D3 Container */}
-              <svg ref={svgRef} className="w-full h-full"></svg>
-            </div>
+          <div className={`w-full max-w-4xl aspect-square relative shadow-2xl rounded-full overflow-hidden ${isDarkMode ? 'bg-neutral-800' : 'bg-white'}`}
+            style={{
+              boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.15)",
+            }}>
+            {/* SVG D3 Container */}
+            <svg ref={svgRef} className="w-full h-full"></svg>
+          </div>
         </div>
       </div>
 
