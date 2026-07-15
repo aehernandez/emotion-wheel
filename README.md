@@ -1,32 +1,37 @@
-# React + TypeScript + Vite
+# Wheel of Emotions
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+An interactive and customizable Wheel of Emotions generator based on the Feeling Wheel by Dr. Gloria Willcox.
 
-Currently, two official plugins are available:
+![Emotion Wheel](./public/emotion-wheel.png)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Features
 
-## React Compiler
+- **Interactive Segments**: Click any emotion segment to customize its text, background color, and text color.
+- **Dynamic Hierarchy**: Add sub-emotions/child segments to expand tiers, or delete unwanted segments.
+- **Customization Controls**:
+  - **Rotation**: Rotate the wheel via range input or dragging the wheel directly.
+  - **Segment Padding**: Adjust borders and spacing between segments.
+  - **Typography**: Select from popular Google Fonts or load custom Google Fonts dynamically.
+  - **Exporting**: Save your configured wheel as high-resolution PNG or vector SVG.
+- **Undo/Redo System**: Debounced change tracking lets you step backward and forward through edits.
+- **Dark Mode**: Sleek dark and light interfaces.
+- **Local Storage Persistence**: Automatically saves your current custom wheel configuration so you never lose your progress.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Tech Stack
 
-## Expanding the Oxlint configuration
+- **Framework**: React 19 + TypeScript + Vite
+- **Styling**: Tailwind CSS v4
+- **Visualization**: D3.js
 
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
+## Development
 
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+# Install dependencies
+npm install
+
+# Run the dev server
+npm run dev
+
+# Build the production bundle
+npm run build
 ```
-
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
